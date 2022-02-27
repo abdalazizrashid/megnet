@@ -280,7 +280,7 @@ class GraphModel:
         return False
     
     def get_all_graphs_targets(
-        self, structures: List[Structure], targets: List[float], scrub_failed_structures: bool = False, parallel
+        self, structures: List[Structure], targets: List[float], scrub_failed_structures: bool = False, parallel = True,
     ) -> tuple:
         """
         Compute the graphs from structures and spit out (graphs, targets) with options to
@@ -297,22 +297,23 @@ class GraphModel:
         """
         graphs_valid = []
         targets_valid = []
-            
-        results = Parallel(n_jobs=cpu_count())(delayed(get_graph_targets)(s, t, CONVERTER, ) for s, t in zip(structures, targets))
-        g, t = list(map(list, zip(*results)))
-        return g, t
-        
-        for i, (s, t) in enumerate(zip(structures, targets)):
-            try:
-                graph = self.graph_converter.convert(s)
-                graphs_valid.append(graph)
-                targets_valid.append(t)
-            except Exception as e:
-                if scrub_failed_structures:
-                    warn(f"structure with index {i} failed the graph computations", UserWarning)
-                    continue
-                raise RuntimeError(str(e))
-        return graphs_valid, targets_valid
+
+        if parallel:
+            results = Parallel(n_jobs=cpu_count())(delayed(get_graph_targets)(s, t, CONVERTER, ) for s, t in zip(structures, targets))
+            g, t = list(map(list, zip(*results)))
+            return g, t
+        else:
+            for i, (s, t) in enumerate(zip(structures, targets)):
+                try:
+                    graph = self.graph_converter.convert(s)
+                    graphs_valid.append(graph)
+                    targets_valid.append(t)
+                except Exception as e:
+                    if scrub_failed_structures:
+                        warn(f"structure with index {i} failed the graph computations", UserWarning)
+                        continue
+                    raise RuntimeError(str(e))
+            return graphs_valid, targets_valid
 
     def predict_structure(self, structure: Structure) -> np.ndarray:
         """
@@ -413,6 +414,7 @@ class GraphModel:
         """
         configs = loadfn(filename + ".json")
         from tensorflow.keras.models import load_model
+
         from megnet.layers import _CUSTOM_OBJECTS
 
         model = load_model(filename, custom_objects=_CUSTOM_OBJECTS)

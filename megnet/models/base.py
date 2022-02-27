@@ -6,17 +6,24 @@ import os
 from typing import Dict, List, Union
 from warnings import warn
 
+from joblib import Parallel, delayed, cpu_count
+
 import numpy as np
 from monty.serialization import dumpfn, loadfn
-from pymatgen.core import Structure
 from tensorflow.keras.backend import int_shape
 from tensorflow.keras.callbacks import Callback
 from tensorflow.keras.models import Model
+from pymatgen.core import Structure
 
-from megnet.callbacks import ManualStop, ModelCheckpointMAE, ReduceLRUponNan
+from megnet.callbacks import ModelCheckpointMAE, ManualStop, ReduceLRUponNan
 from megnet.data.graph import GraphBatchDistanceConvert, GraphBatchGenerator, StructureGraph
 from megnet.utils.preprocessing import DummyScaler, Scaler
 
+CONVERTER = None
+
+def get_graph_targets(s, t, converter):
+    graph = converter.convert(s)
+    return graph, t
 
 class GraphModel:
     """
@@ -48,6 +55,8 @@ class GraphModel:
         self.graph_converter = graph_converter
         self.target_scaler = target_scaler
         self.metadata = metadata or {}
+        global CONVERTER
+        CONVERTER = graph_converter
 
     def __getattr__(self, p):
         return getattr(self.model, p)
@@ -269,9 +278,9 @@ class GraphModel:
             if not matched:
                 raise ValueError(f"The data dimension for {i} is {j} and does not match model required shape of {k}")
         return False
-
+    
     def get_all_graphs_targets(
-        self, structures: List[Structure], targets: List[float], scrub_failed_structures: bool = False
+        self, structures: List[Structure], targets: List[float], scrub_failed_structures: bool = False, parallel
     ) -> tuple:
         """
         Compute the graphs from structures and spit out (graphs, targets) with options to
@@ -288,7 +297,11 @@ class GraphModel:
         """
         graphs_valid = []
         targets_valid = []
-
+            
+        results = Parallel(n_jobs=cpu_count())(delayed(get_graph_targets)(s, t, CONVERTER, ) for s, t in zip(structures, targets))
+        g, t = list(map(list, zip(*results)))
+        return g, t
+        
         for i, (s, t) in enumerate(zip(structures, targets)):
             try:
                 graph = self.graph_converter.convert(s)
@@ -400,7 +413,6 @@ class GraphModel:
         """
         configs = loadfn(filename + ".json")
         from tensorflow.keras.models import load_model
-
         from megnet.layers import _CUSTOM_OBJECTS
 
         model = load_model(filename, custom_objects=_CUSTOM_OBJECTS)
